@@ -14,6 +14,7 @@
 #include "GCNSubtarget.h"
 #include "Utils/AMDGPUBaseInfo.h"
 #include "llvm/Analysis/CycleAnalysis.h"
+#include "llvm/Analysis/UniformityAnalysis.h"
 #include "llvm/CodeGen/TargetPassConfig.h"
 #include "llvm/IR/IntrinsicsAMDGPU.h"
 #include "llvm/IR/IntrinsicsR600.h"
@@ -1014,6 +1015,97 @@ struct AAAMDGPUNoAGPR
 
 const char AAAMDGPUNoAGPR::ID = 0;
 
+struct AAAMDGPUInreg
+    : public IRAttribute<Attribute::InReg,
+                         StateWrapper<BooleanState, AbstractAttribute>,
+                         AAAMDGPUInreg> {
+  AAAMDGPUInreg(const IRPosition &IRP, Attributor &A) : IRAttribute(IRP) {}
+
+  /// Create an abstract attribute view for the position \p IRP.
+  static AAAMDGPUInreg &createForPosition(const IRPosition &IRP, Attributor &A);
+
+  /// See AbstractAttribute::getName()
+  const std::string getName() const override { return "AAAMDGPUInreg"; }
+
+  const std::string getAsStr(Attributor *A) const override {
+    return getAssumed() ? "inreg" : "non-inreg";
+  }
+
+  void trackStatistics() const override {}
+
+  /// See AbstractAttribute::getIdAddr()
+  const char *getIdAddr() const override { return &ID; }
+
+  /// This function should return true if the type of the \p AA is AAAMDGPUInreg
+  static bool classof(const AbstractAttribute *AA) {
+    return (AA->getIdAddr() == &ID);
+  }
+
+  /// Unique ID (due to the unique address)
+  static const char ID;
+};
+
+const char AAAMDGPUInreg::ID = 0;
+
+namespace {
+
+struct AAAMDGPUInregArgument : public AAAMDGPUInreg {
+  AAAMDGPUInregArgument(const IRPosition &IRP, Attributor &A)
+      : AAAMDGPUInreg(IRP, A) {}
+
+  void initialize(Attributor &A) override {
+    if (getAssociatedArgument()->hasAttribute(Attribute::InReg))
+      indicateOptimisticFixpoint();
+  }
+
+  ChangeStatus updateImpl(Attributor &A) override {
+    unsigned ArgNo = getAssociatedArgument()->getArgNo();
+
+    auto Pred = [&](AbstractCallSite ACS) -> bool {
+      CallBase *CB = ACS.getInstruction();
+      Value *V = CB->getArgOperandUse(ArgNo);
+      if (auto *G = dyn_cast<GlobalValue>(V))
+        return true;
+      if (auto *I = dyn_cast<Instruction>(V)) {
+        auto AU = A.getInfoCache()
+                      .getAnalysisResultForFunction<UniformityInfoAnalysis>(
+                          *I->getFunction());
+        return AU && AU->isUniform(I);
+      }
+      if (auto *Arg = dyn_cast<Argument>(V)) {
+        auto *AA =
+            A.getOrCreateAAFor<AAAMDGPUInreg>(IRPosition::argument(*Arg));
+        return AA && AA->isValidState();
+      }
+      // For unforeseen cases, we need to assume it is not uniform thus not
+      // qualified for inreg.
+      return false;
+    };
+
+    bool UsedAssumedInformation = false;
+    if (!A.checkForAllCallSites(Pred, *this, /*RequireAllCallSites=*/true,
+                                UsedAssumedInformation))
+      return indicatePessimisticFixpoint();
+
+    if (!UsedAssumedInformation)
+      return indicateOptimisticFixpoint();
+
+    return ChangeStatus::UNCHANGED;
+  }
+};
+
+} // namespace
+
+AAAMDGPUInreg &AAAMDGPUInreg::createForPosition(const IRPosition &IRP,
+                                                Attributor &A) {
+  switch (IRP.getPositionKind()) {
+  case IRPosition::IRP_ARGUMENT:
+    return *new (A.Allocator) AAAMDGPUInregArgument(IRP, A);
+  default:
+    llvm_unreachable("not a valid position for AAAMDGPUInreg");
+  }
+}
+
 static void addPreloadKernArgHint(Function &F, TargetMachine &TM) {
   const GCNSubtarget &ST = TM.getSubtarget<GCNSubtarget>(F);
   for (unsigned I = 0;
@@ -1046,7 +1138,7 @@ static bool runImpl(Module &M, AnalysisGetter &AG, TargetMachine &TM,
        &AAAMDWavesPerEU::ID, &AAAMDGPUNoAGPR::ID, &AACallEdges::ID,
        &AAPointerInfo::ID, &AAPotentialConstantValues::ID,
        &AAUnderlyingObjects::ID, &AAAddressSpace::ID, &AAIndirectCallInfo::ID,
-       &AAInstanceInfo::ID});
+       &AAInstanceInfo::ID, &AAAMDGPUInreg::ID});
 
   AttributorConfig AC(CGUpdater);
   AC.IsClosedWorldModule = Options.IsClosedWorld;
@@ -1090,6 +1182,11 @@ static bool runImpl(Module &M, AnalysisGetter &AG, TargetMachine &TM,
             IRPosition::value(*SI->getPointerOperand()));
       }
     }
+
+    if (F.getCallingConv() != CallingConv::AMDGPU_KERNEL) {
+      for (auto &Arg : F.args())
+        A.getOrCreateAAFor<AAAMDGPUInreg>(IRPosition::argument(Arg));
+    }
   }
 
   ChangeStatus Change = A.run();
@@ -1118,6 +1215,7 @@ public:
 
   void getAnalysisUsage(AnalysisUsage &AU) const override {
     AU.addRequired<CycleInfoWrapperPass>();
+    AU.addRequired<UniformityInfoWrapperPass>();
   }
 
   StringRef getPassName() const override { return "AMDGPU Attributor"; }
