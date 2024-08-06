@@ -2,10 +2,8 @@
 ! RUN: %flang_fc1 -emit-hlfir -fopenmp -fopenmp-version=50 %s -o - | FileCheck %s
 ! RUN: bbc -emit-hlfir -fopenmp -fopenmp-version=50 %s -o - | FileCheck %s
 
-! This tests primary goal is to check the promotion of
-! non-CPTR arguments from use_device_ptr to
-! use_device_addr works, without breaking any
-! functionality
+! This tests primary goal is to check the promotion of non-CPTR arguments from
+! use_device_ptr to use_device_addr works, without breaking any functionality.
 
 !CHECK: func.func @{{.*}}only_use_device_ptr()
 !CHECK: omp.target_data use_device_addr(%{{.*}}, %{{.*}}, %{{.*}}, %{{.*}} : !fir.llvm_ptr<!fir.ref<!fir.array<?xf32>>>, !fir.ref<!fir.box<!fir.ptr<!fir.array<?xf32>>>>, !fir.llvm_ptr<!fir.ref<!fir.array<?xi32>>>, !fir.ref<!fir.box<!fir.ptr<!fir.array<?xi32>>>>) use_device_ptr(%{{.*}} : !fir.ref<!fir.type<_QM__fortran_builtinsT__builtin_c_ptr{__address:i64}>>) {
