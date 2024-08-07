@@ -515,8 +515,9 @@ private:
   void visitFunction(const Function &F);
   void visitBasicBlock(BasicBlock &BB);
   void verifyRangeMetadata(const Value &V, const MDNode *Range, Type *Ty,
-                           bool IsAbsoluteSymbol);
+                           bool IsAbsoluteSymbol, bool IsAddrSpaceRange);
   void visitRangeMetadata(Instruction &I, MDNode *Range, Type *Ty);
+  void visitNoaliasAddrspaceMetadata(Instruction &I, MDNode *Range, Type *Ty);
   void visitDereferenceableMetadata(Instruction &I, MDNode *MD);
   void visitProfMetadata(Instruction &I, MDNode *MD);
   void visitCallStackMetadata(MDNode *MD);
@@ -760,7 +761,7 @@ void Verifier::visitGlobalValue(const GlobalValue &GV) {
     if (const MDNode *AbsoluteSymbol =
             GO->getMetadata(LLVMContext::MD_absolute_symbol)) {
       verifyRangeMetadata(*GO, AbsoluteSymbol, DL.getIntPtrType(GO->getType()),
-                          true);
+                          true, false);
     }
   }
 
@@ -4128,7 +4129,8 @@ static bool isContiguous(const ConstantRange &A, const ConstantRange &B) {
 /// Verify !range and !absolute_symbol metadata. These have the same
 /// restrictions, except !absolute_symbol allows the full set.
 void Verifier::verifyRangeMetadata(const Value &I, const MDNode *Range,
-                                   Type *Ty, bool IsAbsoluteSymbol) {
+                                   Type *Ty, bool IsAbsoluteSymbol,
+                                   bool IsAddrSpaceRange) {
   unsigned NumOperands = Range->getNumOperands();
   Check(NumOperands % 2 == 0, "Unfinished range!", Range);
   unsigned NumRanges = NumOperands / 2;
@@ -4145,8 +4147,14 @@ void Verifier::verifyRangeMetadata(const Value &I, const MDNode *Range,
 
     Check(High->getType() == Low->getType(), "Range pair types must match!",
           &I);
-    Check(High->getType() == Ty->getScalarType(),
-          "Range types must match instruction type!", &I);
+
+    if (IsAddrSpaceRange) {
+      Check(High->getType()->isIntegerTy(32),
+            "noalias.addrspace type must be i32!", &I);
+    } else {
+      Check(High->getType() == Ty->getScalarType(),
+            "Range types must match instruction type!", &I);
+    }
 
     APInt HighV = High->getValue();
     APInt LowV = Low->getValue();
@@ -4185,7 +4193,14 @@ void Verifier::verifyRangeMetadata(const Value &I, const MDNode *Range,
 void Verifier::visitRangeMetadata(Instruction &I, MDNode *Range, Type *Ty) {
   assert(Range && Range == I.getMetadata(LLVMContext::MD_range) &&
          "precondition violation");
-  verifyRangeMetadata(I, Range, Ty, false);
+  verifyRangeMetadata(I, Range, Ty, false, false);
+}
+
+void Verifier::visitNoaliasAddrspaceMetadata(Instruction &I, MDNode *Range,
+                                             Type *Ty) {
+  assert(Range && Range == I.getMetadata(LLVMContext::MD_noalias_addrspace) &&
+         "precondition violation");
+  verifyRangeMetadata(I, Range, Ty, false, true);
 }
 
 void Verifier::checkAtomicMemAccessSize(Type *Ty, const Instruction *I) {
@@ -5175,6 +5190,13 @@ void Verifier::visitInstruction(Instruction &I) {
     Check(isa<LoadInst>(I) || isa<CallInst>(I) || isa<InvokeInst>(I),
           "Ranges are only for loads, calls and invokes!", &I);
     visitRangeMetadata(I, Range, I.getType());
+  }
+
+  if (MDNode *Range = I.getMetadata(LLVMContext::MD_noalias_addrspace)) {
+    Check(isa<LoadInst>(I) || isa<StoreInst>(I) || isa<AtomicRMWInst>(I) ||
+              isa<AtomicCmpXchgInst>(I) || isa<CallInst>(I),
+          "noalias.addrspace are only for memory operations!", &I);
+    visitNoaliasAddrspaceMetadata(I, Range, I.getType());
   }
 
   if (I.hasMetadata(LLVMContext::MD_invariant_group)) {
