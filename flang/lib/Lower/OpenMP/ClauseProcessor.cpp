@@ -1099,8 +1099,8 @@ bool ClauseProcessor::processUseDeviceAddr(
            llvm::SmallVector<OmpMapMemberIndicesData>>
       parentMemberIndices;
   bool clauseFound = findRepeatableClause<omp::clause::UseDeviceAddr>(
-      [&](const omp::clause::UseDeviceAddr &clause, const parser::CharBlock &) {
-        const parser::CharBlock source;
+      [&](const omp::clause::UseDeviceAddr &clause,
+          const parser::CharBlock &source) {
         mlir::Location location = converter.genLocation(source);
         llvm::omp::OpenMPOffloadMappingFlags mapTypeBits =
             llvm::omp::OpenMPOffloadMappingFlags::OMP_MAP_TO |
@@ -1125,8 +1125,8 @@ bool ClauseProcessor::processUseDevicePtr(
            llvm::SmallVector<OmpMapMemberIndicesData>>
       parentMemberIndices;
   bool clauseFound = findRepeatableClause<omp::clause::UseDevicePtr>(
-      [&](const omp::clause::UseDevicePtr &clause, const parser::CharBlock &) {
-        const parser::CharBlock source;
+      [&](const omp::clause::UseDevicePtr &clause,
+          const parser::CharBlock &source) {
         mlir::Location location = converter.genLocation(source);
         llvm::omp::OpenMPOffloadMappingFlags mapTypeBits =
             llvm::omp::OpenMPOffloadMappingFlags::OMP_MAP_TO |

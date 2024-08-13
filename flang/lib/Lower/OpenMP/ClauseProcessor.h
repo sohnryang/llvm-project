@@ -214,8 +214,7 @@ bool ClauseProcessor::processMotionClauses(lower::StatementContext &stmtCtx,
 
         processMapObjects(stmtCtx, clauseLocation,
                           std::get<ObjectList>(clause.t), mapTypeBits,
-                          parentMemberIndices, result.mapVars, &mapSymbols,
-                          nullptr, nullptr);
+                          parentMemberIndices, result.mapVars, &mapSymbols);
       });
 
   insertChildMapInfoIntoParent(converter, parentMemberIndices, result.mapVars,
