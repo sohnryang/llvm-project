@@ -4456,6 +4456,27 @@ bool AMDGPULegalizerInfo::legalizeKernargMemParameter(MachineInstr &MI,
   return true;
 }
 
+/// Legalize a value that's loaded from implicit kernel arguments.
+bool AMDGPULegalizerInfo::legalizeImplicitKernelargParameterPtr(
+    MachineInstr &MI, MachineIRBuilder &B, LLT Ty, unsigned Offset) const {
+  MachineFunction &MF = *MI.getMF();
+  Module *M = MF.getFunction().getParent();
+
+  assert(AMDGPU::getAMDHSACodeObjectVersion(*M) >= AMDGPU::AMDHSA_COV5);
+
+  Register Ptr = getKernargParameterPtr(B, Offset);
+  MachinePointerInfo PtrInfo(AMDGPUAS::CONSTANT_ADDRESS);
+  MachineMemOperand *MMO = MF.getMachineMemOperand(
+      PtrInfo,
+      MachineMemOperand::MOLoad | MachineMemOperand::MODereferenceable |
+          MachineMemOperand::MOInvariant,
+      Ty, commonAlignment(Align(Ty.getSizeInBits()), Offset));
+  Register Temp = B.buildLoad(Ty, Ptr, *MMO).getReg(0);
+  B.buildCopy(MI.getOperand(0).getReg(), Temp);
+  MI.eraseFromParent();
+  return true;
+}
+
 bool AMDGPULegalizerInfo::legalizeFDIV(MachineInstr &MI,
                                        MachineRegisterInfo &MRI,
                                        MachineIRBuilder &B) const {
@@ -7312,9 +7333,17 @@ bool AMDGPULegalizerInfo::legalizeIntrinsic(LegalizerHelper &Helper,
   case Intrinsic::amdgcn_dispatch_ptr:
     return legalizePreloadedArgIntrin(MI, MRI, B,
                                       AMDGPUFunctionArgInfo::DISPATCH_PTR);
-  case Intrinsic::amdgcn_queue_ptr:
+  case Intrinsic::amdgcn_queue_ptr: {
+    MachineFunction &MF = *MI.getMF();
+    Module *M = MF.getFunction().getParent();
+    if (AMDGPU::getAMDHSACodeObjectVersion(*M) >= AMDGPU::AMDHSA_COV5) {
+      uint64_t Offset = ST.getTargetLowering()->getImplicitParameterOffset(
+          B.getMF(), AMDGPUTargetLowering::QUEUE_PTR);
+      return legalizeImplicitKernelargParameterPtr(MI, B, S64, Offset);
+    }
     return legalizePreloadedArgIntrin(MI, MRI, B,
                                       AMDGPUFunctionArgInfo::QUEUE_PTR);
+  }
   case Intrinsic::amdgcn_implicit_buffer_ptr:
     return legalizePreloadedArgIntrin(
       MI, MRI, B, AMDGPUFunctionArgInfo::IMPLICIT_BUFFER_PTR);

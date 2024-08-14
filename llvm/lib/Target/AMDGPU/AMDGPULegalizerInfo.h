@@ -131,6 +131,9 @@ public:
   bool legalizeKernargMemParameter(MachineInstr &MI, MachineIRBuilder &B,
                                    uint64_t Offset,
                                    Align Alignment = Align(4)) const;
+  bool legalizeImplicitKernelargParameterPtr(MachineInstr &MI,
+                                             MachineIRBuilder &B, LLT Ty,
+                                             unsigned Offset) const;
 
   bool legalizeUnsignedDIV_REM(MachineInstr &MI, MachineRegisterInfo &MRI,
                                MachineIRBuilder &B) const;

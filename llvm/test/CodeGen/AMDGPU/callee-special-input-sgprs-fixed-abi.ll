@@ -22,7 +22,8 @@ define amdgpu_kernel void @kern_indirect_use_dispatch_ptr(i32) #1 {
 }
 
 ; GCN-LABEL: {{^}}use_queue_ptr:
-; GCN: s_load_dword s{{[0-9]+}}, s[6:7]
+; GCN: s_mov_b64 s[4:5], 0xc8
+; GCN-NEXT: s_load_dwordx2 s[4:5], s[4:5], 0x0
 define hidden void @use_queue_ptr() #1 {
   %queue_ptr = call noalias ptr addrspace(4) @llvm.amdgcn.queue.ptr() #0
   %value = load volatile i32, ptr addrspace(4) %queue_ptr

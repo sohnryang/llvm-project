@@ -8414,8 +8414,13 @@ SDValue SITargetLowering::LowerINTRINSIC_WO_CHAIN(SDValue Op,
     return getPreloadedValue(DAG, *MFI, VT,
                              AMDGPUFunctionArgInfo::IMPLICIT_BUFFER_PTR);
   }
-  case Intrinsic::amdgcn_dispatch_ptr:
   case Intrinsic::amdgcn_queue_ptr: {
+    const Module *M = DAG.getMachineFunction().getFunction().getParent();
+    if (AMDGPU::getAMDHSACodeObjectVersion(*M) >= AMDGPU::AMDHSA_COV5)
+      return loadImplicitKernelArgument(DAG, MVT::i64, DL, Align(8), QUEUE_PTR);
+    [[fallthrough]];
+  }
+  case Intrinsic::amdgcn_dispatch_ptr: {
     if (!Subtarget->isAmdHsaOrMesa(MF.getFunction())) {
       DiagnosticInfoUnsupported BadIntrin(
           MF.getFunction(), "unsupported hsa intrinsic without hsa target",
