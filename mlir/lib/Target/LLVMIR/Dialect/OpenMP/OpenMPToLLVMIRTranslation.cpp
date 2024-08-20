@@ -2101,6 +2101,7 @@ getRefPtrIfDeclareTarget(mlir::Value value,
   return nullptr;
 }
 
+namespace {
 // A small helper structure to contain data gathered
 // for map lowering and coalese it into one area and
 // avoiding extra computations such as searches in the
@@ -2129,6 +2130,7 @@ struct MapInfoData : llvm::OpenMPIRBuilder::MapInfosTy {
     llvm::OpenMPIRBuilder::MapInfosTy::append(CurInfo);
   }
 };
+} // namespace
 
 uint64_t getArrayElementSizeInBits(LLVM::LLVMArrayType arrTy, DataLayout &dl) {
   if (auto nestedArrTy = llvm::dyn_cast_if_present<LLVM::LLVMArrayType>(
@@ -2195,16 +2197,15 @@ llvm::Value *getSizeInBytes(DataLayout &dl, const mlir::Type &type,
   return builder.getInt64(dl.getTypeSizeInBits(type) / 8);
 }
 
-void collectMapDataFromMapOperands(
-    MapInfoData &mapData, llvm::SmallVectorImpl<Value> &mapVars,
+static void collectMapDataFromMapOperands(
+    MapInfoData &mapData, SmallVectorImpl<Value> &mapVars,
     LLVM::ModuleTranslation &moduleTranslation, DataLayout &dl,
-    llvm::IRBuilderBase &builder,
-    const llvm::ArrayRef<Value> &useDevPtrOperands = {},
-    const llvm::ArrayRef<Value> &useDevAddrOperands = {}) {
+    llvm::IRBuilderBase &builder, const ArrayRef<Value> &useDevPtrOperands = {},
+    const ArrayRef<Value> &useDevAddrOperands = {}) {
   // Process MapOperands
-  for (mlir::Value mapValue : mapVars) {
-    auto mapOp = mlir::cast<mlir::omp::MapInfoOp>(mapValue.getDefiningOp());
-    mlir::Value offloadPtr =
+  for (Value mapValue : mapVars) {
+    auto mapOp = cast<omp::MapInfoOp>(mapValue.getDefiningOp());
+    Value offloadPtr =
         mapOp.getVarPtrPtr() ? mapOp.getVarPtrPtr() : mapOp.getVarPtr();
     mapData.OriginalValue.push_back(moduleTranslation.lookupValue(offloadPtr));
     mapData.Pointers.push_back(mapData.OriginalValue.back());
@@ -2240,9 +2241,9 @@ void collectMapDataFromMapOperands(
     // TODO: May require some further additions to support nested record
     // types, i.e. member maps that can have member maps.
     mapData.IsAMember.push_back(false);
-    for (mlir::Value mapValue : mapVars) {
-      if (auto map = mlir::dyn_cast_if_present<mlir::omp::MapInfoOp>(
-              mapValue.getDefiningOp())) {
+    for (Value mapValue : mapVars) {
+      if (auto map =
+              dyn_cast_if_present<omp::MapInfoOp>(mapValue.getDefiningOp())) {
         for (auto member : map.getMembers()) {
           if (member == mapOp) {
             mapData.IsAMember.back() = true;
@@ -2271,9 +2272,9 @@ void collectMapDataFromMapOperands(
   // Process useDevPtr(Addr)Operands
   auto addDevInfos = [&](const llvm::ArrayRef<Value> &useDevOperands,
                          llvm::OpenMPIRBuilder::DeviceInfoTy devInfoTy) {
-    for (mlir::Value mapValue : useDevOperands) {
-      auto mapOp = mlir::cast<mlir::omp::MapInfoOp>(mapValue.getDefiningOp());
-      mlir::Value offloadPtr =
+    for (Value mapValue : useDevOperands) {
+      auto mapOp = cast<omp::MapInfoOp>(mapValue.getDefiningOp());
+      Value offloadPtr =
           mapOp.getVarPtrPtr() ? mapOp.getVarPtrPtr() : mapOp.getVarPtr();
       llvm::Value *origValue = moduleTranslation.lookupValue(offloadPtr);
 
@@ -2302,9 +2303,9 @@ void collectMapDataFromMapOperands(
         // TODO: May require some further additions to support nested record
         // types, i.e. member maps that can have member maps.
         mapData.IsAMember.push_back(false);
-        for (mlir::Value mapValue : useDevOperands)
-          if (auto map = mlir::dyn_cast_if_present<mlir::omp::MapInfoOp>(
-                  mapValue.getDefiningOp()))
+        for (Value mapValue : useDevOperands)
+          if (auto map =
+                  dyn_cast_if_present<omp::MapInfoOp>(mapValue.getDefiningOp()))
             for (auto member : map.getMembers())
               if (member == mapOp)
                 mapData.IsAMember.back() = true;
@@ -2316,22 +2317,21 @@ void collectMapDataFromMapOperands(
   addDevInfos(useDevAddrOperands, llvm::OpenMPIRBuilder::DeviceInfoTy::Address);
 }
 
-static int getMapDataMemberIdx(MapInfoData &mapData,
-                               mlir::omp::MapInfoOp memberOp) {
+static int getMapDataMemberIdx(MapInfoData &mapData, omp::MapInfoOp memberOp) {
   auto *res = llvm::find(mapData.MapClause, memberOp);
   assert(res != mapData.MapClause.end() &&
          "MapInfoOp for member not found in MapData, cannot return index");
   return std::distance(mapData.MapClause.begin(), res);
 }
 
-static mlir::omp::MapInfoOp
-getFirstOrLastMappedMemberPtr(mlir::omp::MapInfoOp mapInfo, bool first) {
-  mlir::DenseIntElementsAttr indexAttr = mapInfo.getMembersIndexAttr();
+static omp::MapInfoOp getFirstOrLastMappedMemberPtr(omp::MapInfoOp mapInfo,
+                                                    bool first) {
+  DenseIntElementsAttr indexAttr = mapInfo.getMembersIndexAttr();
 
   // Only 1 member has been mapped, we can return it.
   if (indexAttr.size() == 1)
-    if (auto mapOp = mlir::dyn_cast<mlir::omp::MapInfoOp>(
-            mapInfo.getMembers()[0].getDefiningOp()))
+    if (auto mapOp =
+            dyn_cast<omp::MapInfoOp>(mapInfo.getMembers()[0].getDefiningOp()))
       return mapOp;
 
   llvm::ArrayRef<int64_t> shape = indexAttr.getShapedType().getShape();
@@ -2368,7 +2368,7 @@ getFirstOrLastMappedMemberPtr(mlir::omp::MapInfoOp mapInfo, bool first) {
                return false;
              });
 
-  return llvm::cast<mlir::omp::MapInfoOp>(
+  return llvm::cast<omp::MapInfoOp>(
       mapInfo.getMembers()[indices.front()].getDefiningOp());
 }
 
@@ -2394,7 +2394,7 @@ getFirstOrLastMappedMemberPtr(mlir::omp::MapInfoOp mapInfo, bool first) {
 std::vector<llvm::Value *>
 calculateBoundsOffset(LLVM::ModuleTranslation &moduleTranslation,
                       llvm::IRBuilderBase &builder, bool isArrayTy,
-                      mlir::OperandRange bounds) {
+                      OperandRange bounds) {
   std::vector<llvm::Value *> idx;
   // There's no bounds to calculate an offset from, we can safely
   // ignore and return no indices.
@@ -2408,7 +2408,7 @@ calculateBoundsOffset(LLVM::ModuleTranslation &moduleTranslation,
   if (isArrayTy) {
     idx.push_back(builder.getInt64(0));
     for (int i = bounds.size() - 1; i >= 0; --i) {
-      if (auto boundOp = mlir::dyn_cast_if_present<mlir::omp::MapBoundsOp>(
+      if (auto boundOp = dyn_cast_if_present<omp::MapBoundsOp>(
               bounds[i].getDefiningOp())) {
         idx.push_back(moduleTranslation.lookupValue(boundOp.getLowerBound()));
       }
@@ -2434,7 +2434,7 @@ calculateBoundsOffset(LLVM::ModuleTranslation &moduleTranslation,
     //  (extent/size of current) 100 for 1000 for each index increment
     std::vector<llvm::Value *> dimensionIndexSizeOffset{builder.getInt64(1)};
     for (size_t i = 1; i < bounds.size(); ++i) {
-      if (auto boundOp = mlir::dyn_cast_if_present<mlir::omp::MapBoundsOp>(
+      if (auto boundOp = dyn_cast_if_present<omp::MapBoundsOp>(
               bounds[i].getDefiningOp())) {
         dimensionIndexSizeOffset.push_back(builder.CreateMul(
             moduleTranslation.lookupValue(boundOp.getExtent()),
@@ -2447,7 +2447,7 @@ calculateBoundsOffset(LLVM::ModuleTranslation &moduleTranslation,
     // have calculated in the previous and accumulate the results to get
     // our final resulting offset.
     for (int i = bounds.size() - 1; i >= 0; --i) {
-      if (auto boundOp = mlir::dyn_cast_if_present<mlir::omp::MapBoundsOp>(
+      if (auto boundOp = dyn_cast_if_present<omp::MapBoundsOp>(
               bounds[i].getDefiningOp())) {
         if (idx.empty())
           idx.emplace_back(builder.CreateMul(
@@ -2504,7 +2504,7 @@ static llvm::omp::OpenMPOffloadMappingFlags mapParentWithMembers(
   // data by the descriptor (which itself, is a structure containing
   // runtime information on the dynamically allocated data).
   auto parentClause =
-      llvm::cast<mlir::omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
+      llvm::cast<omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
 
   llvm::Value *lowAddr, *highAddr;
   if (!parentClause.getPartialMap()) {
@@ -2516,8 +2516,7 @@ static llvm::omp::OpenMPOffloadMappingFlags mapParentWithMembers(
         builder.getPtrTy());
     combinedInfo.Pointers.emplace_back(mapData.Pointers[mapDataIndex]);
   } else {
-    auto mapOp =
-        mlir::dyn_cast<mlir::omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
+    auto mapOp = dyn_cast<omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
     int firstMemberIdx = getMapDataMemberIdx(
         mapData, getFirstOrLastMappedMemberPtr(mapOp, true));
     lowAddr = builder.CreatePointerCast(mapData.Pointers[firstMemberIdx],
@@ -2575,7 +2574,7 @@ static llvm::omp::OpenMPOffloadMappingFlags mapParentWithMembers(
 // There may be a better way to verify this, but unfortunately with
 // opaque pointers we lose the ability to easily check if something is
 // a pointer whilst maintaining access to the underlying type.
-static bool checkIfPointerMap(mlir::omp::MapInfoOp mapOp) {
+static bool checkIfPointerMap(omp::MapInfoOp mapOp) {
   // If we have a varPtrPtr field assigned then the underlying type is a pointer
   if (mapOp.getVarPtrPtr())
     return true;
@@ -2597,11 +2596,11 @@ static void processMapMembersWithParent(
     uint64_t mapDataIndex, llvm::omp::OpenMPOffloadMappingFlags memberOfFlag) {
 
   auto parentClause =
-      llvm::cast<mlir::omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
+      llvm::cast<omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
 
   for (auto mappedMembers : parentClause.getMembers()) {
     auto memberClause =
-        llvm::cast<mlir::omp::MapInfoOp>(mappedMembers.getDefiningOp());
+        llvm::cast<omp::MapInfoOp>(mappedMembers.getDefiningOp());
     int memberDataIdx = getMapDataMemberIdx(mapData, memberClause);
 
     assert(memberDataIdx >= 0 && "could not find mapped member of structure");
@@ -2635,8 +2634,7 @@ processIndividualMap(MapInfoData &mapData, size_t mapDataIdx,
   // OMP_MAP_TARGET_PARAM as they are not passed as parameters, they're
   // marked with OMP_MAP_PTR_AND_OBJ instead.
   auto mapFlag = mapData.Types[mapDataIdx];
-  auto mapInfoOp =
-      llvm::cast<mlir::omp::MapInfoOp>(mapData.MapClause[mapDataIdx]);
+  auto mapInfoOp = llvm::cast<omp::MapInfoOp>(mapData.MapClause[mapDataIdx]);
 
   bool isPtrTy = checkIfPointerMap(mapInfoOp);
   if (isPtrTy)
@@ -2646,7 +2644,7 @@ processIndividualMap(MapInfoData &mapData, size_t mapDataIdx,
     mapFlag |= llvm::omp::OpenMPOffloadMappingFlags::OMP_MAP_TARGET_PARAM;
 
   if (mapInfoOp.getMapCaptureType().value() ==
-          mlir::omp::VariableCaptureKind::ByCopy &&
+          omp::VariableCaptureKind::ByCopy &&
       !isPtrTy)
     mapFlag |= llvm::omp::OpenMPOffloadMappingFlags::OMP_MAP_LITERAL;
 
@@ -2672,13 +2670,13 @@ static void processMapWithMembersOf(
     llvm::OpenMPIRBuilder::MapInfosTy &combinedInfo, MapInfoData &mapData,
     uint64_t mapDataIndex, bool isTargetParams) {
   auto parentClause =
-      llvm::cast<mlir::omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
+      llvm::cast<omp::MapInfoOp>(mapData.MapClause[mapDataIndex]);
 
   // If we have a partial map (no parent referenced in the map clauses of the
   // directive, only members) and only a single member, we do not need to bind
   // the map of the member to the parent, we can pass the member separately.
   if (parentClause.getMembers().size() == 1 && parentClause.getPartialMap()) {
-    auto memberClause = llvm::cast<mlir::omp::MapInfoOp>(
+    auto memberClause = llvm::cast<omp::MapInfoOp>(
         parentClause.getMembers()[0].getDefiningOp());
     int memberDataIdx = getMapDataMemberIdx(mapData, memberClause);
     // Note: Clang treats arrays with explicit bounds that fall into this
@@ -2715,11 +2713,9 @@ createAlteredByCaptureMap(MapInfoData &mapData,
   for (size_t i = 0; i < mapData.MapClause.size(); ++i) {
     // if it's declare target, skip it, it's handled separately.
     if (!mapData.IsDeclareTarget[i]) {
-      auto mapOp =
-          mlir::dyn_cast_if_present<mlir::omp::MapInfoOp>(mapData.MapClause[i]);
-      mlir::omp::VariableCaptureKind captureKind =
-          mapOp.getMapCaptureType().value_or(
-              mlir::omp::VariableCaptureKind::ByRef);
+      auto mapOp = dyn_cast_if_present<omp::MapInfoOp>(mapData.MapClause[i]);
+      omp::VariableCaptureKind captureKind =
+          mapOp.getMapCaptureType().value_or(omp::VariableCaptureKind::ByRef);
       bool isPtrTy = checkIfPointerMap(mapOp);
 
       // Currently handles array sectioning lowerbound case, but more
@@ -2730,7 +2726,7 @@ createAlteredByCaptureMap(MapInfoData &mapData,
       // function mimics some of the logic from Clang that we require for
       // kernel argument passing from host -> device.
       switch (captureKind) {
-      case mlir::omp::VariableCaptureKind::ByRef: {
+      case omp::VariableCaptureKind::ByRef: {
         llvm::Value *newV = mapData.Pointers[i];
         std::vector<llvm::Value *> offsetIdx = calculateBoundsOffset(
             moduleTranslation, builder, mapData.BaseType[i]->isArrayTy(),
@@ -2743,7 +2739,7 @@ createAlteredByCaptureMap(MapInfoData &mapData,
                                            "array_offset");
         mapData.Pointers[i] = newV;
       } break;
-      case mlir::omp::VariableCaptureKind::ByCopy: {
+      case omp::VariableCaptureKind::ByCopy: {
         llvm::Type *type = mapData.BaseType[i];
         llvm::Value *newV;
         if (mapData.Pointers[i]->getType()->isPointerTy())
@@ -2765,8 +2761,8 @@ createAlteredByCaptureMap(MapInfoData &mapData,
         mapData.Pointers[i] = newV;
         mapData.BasePointers[i] = newV;
       } break;
-      case mlir::omp::VariableCaptureKind::This:
-      case mlir::omp::VariableCaptureKind::VLAType:
+      case omp::VariableCaptureKind::This:
+      case omp::VariableCaptureKind::VLAType:
         mapData.MapClause[i]->emitOpError("Unhandled capture kind");
         break;
       }
@@ -2807,7 +2803,7 @@ static void genMapInfos(llvm::IRBuilderBase &builder,
     if (mapData.IsAMember[i])
       continue;
 
-    auto mapInfoOp = mlir::dyn_cast<mlir::omp::MapInfoOp>(mapData.MapClause[i]);
+    auto mapInfoOp = dyn_cast<omp::MapInfoOp>(mapData.MapClause[i]);
     if (!mapInfoOp.getMembers().empty()) {
       processMapWithMembersOf(moduleTranslation, builder, *ompBuilder, dl,
                               combinedInfo, mapData, i, isTargetParams);
