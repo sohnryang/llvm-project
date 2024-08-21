@@ -2242,14 +2242,10 @@ static void collectMapDataFromMapOperands(
     // types, i.e. member maps that can have member maps.
     mapData.IsAMember.push_back(false);
     for (Value mapValue : mapVars) {
-      if (auto map =
-              dyn_cast_if_present<omp::MapInfoOp>(mapValue.getDefiningOp())) {
-        for (auto member : map.getMembers()) {
-          if (member == mapOp) {
-            mapData.IsAMember.back() = true;
-          }
-        }
-      }
+      auto map = cast<omp::MapInfoOp>(mapValue.getDefiningOp());
+      for (auto member : map.getMembers())
+        if (member == mapOp)
+          mapData.IsAMember.back() = true;
     }
   }
 
@@ -2303,12 +2299,12 @@ static void collectMapDataFromMapOperands(
         // TODO: May require some further additions to support nested record
         // types, i.e. member maps that can have member maps.
         mapData.IsAMember.push_back(false);
-        for (Value mapValue : useDevOperands)
-          if (auto map =
-                  dyn_cast_if_present<omp::MapInfoOp>(mapValue.getDefiningOp()))
-            for (auto member : map.getMembers())
-              if (member == mapOp)
-                mapData.IsAMember.back() = true;
+        for (Value mapValue : useDevOperands) {
+          auto map = cast<omp::MapInfoOp>(mapValue.getDefiningOp());
+          for (auto member : map.getMembers())
+            if (member == mapOp)
+              mapData.IsAMember.back() = true;
+        }
       }
     }
   };
@@ -2713,7 +2709,7 @@ createAlteredByCaptureMap(MapInfoData &mapData,
   for (size_t i = 0; i < mapData.MapClause.size(); ++i) {
     // if it's declare target, skip it, it's handled separately.
     if (!mapData.IsDeclareTarget[i]) {
-      auto mapOp = dyn_cast_if_present<omp::MapInfoOp>(mapData.MapClause[i]);
+      auto mapOp = cast<omp::MapInfoOp>(mapData.MapClause[i]);
       omp::VariableCaptureKind captureKind =
           mapOp.getMapCaptureType().value_or(omp::VariableCaptureKind::ByRef);
       bool isPtrTy = checkIfPointerMap(mapOp);
@@ -2935,20 +2931,18 @@ convertOmpTargetData(Operation *op, llvm::IRBuilderBase &builder,
       if (!info.DevicePtrInfoMap.empty()) {
         builder.restoreIP(codeGenIP);
         unsigned argIndex = 0;
-        for (size_t i = 0; i < combinedInfo.BasePointers.size(); ++i) {
-          if (combinedInfo.DevicePointers[i] ==
-              llvm::OpenMPIRBuilder::DeviceInfoTy::Pointer) {
+        for (auto [basePointer, devicePointer] : llvm::zip_equal(
+                 combinedInfo.BasePointers, combinedInfo.DevicePointers)) {
+          if (devicePointer == llvm::OpenMPIRBuilder::DeviceInfoTy::Pointer) {
             const auto &arg = region.front().getArgument(argIndex);
             moduleTranslation.mapValue(
-                arg,
-                info.DevicePtrInfoMap[combinedInfo.BasePointers[i]].second);
+                arg, info.DevicePtrInfoMap[basePointer].second);
             argIndex++;
-          } else if (combinedInfo.DevicePointers[i] ==
+          } else if (devicePointer ==
                      llvm::OpenMPIRBuilder::DeviceInfoTy::Address) {
             const auto &arg = region.front().getArgument(argIndex);
             auto *loadInst = builder.CreateLoad(
-                builder.getPtrTy(),
-                info.DevicePtrInfoMap[combinedInfo.BasePointers[i]].second);
+                builder.getPtrTy(), info.DevicePtrInfoMap[basePointer].second);
             moduleTranslation.mapValue(arg, loadInst);
             argIndex++;
           }
@@ -2968,13 +2962,12 @@ convertOmpTargetData(Operation *op, llvm::IRBuilderBase &builder,
         // we need to link them here before codegen.
         if (ompBuilder->Config.IsTargetDevice.value_or(false)) {
           unsigned argIndex = 0;
-          for (size_t i = 0; i < mapData.BasePointers.size(); ++i) {
-            if (mapData.DevicePointers[i] ==
-                    llvm::OpenMPIRBuilder::DeviceInfoTy::Pointer ||
-                mapData.DevicePointers[i] ==
-                    llvm::OpenMPIRBuilder::DeviceInfoTy::Address) {
+          for (auto [basePointer, devicePointer] :
+               llvm::zip_equal(mapData.BasePointers, mapData.DevicePointers)) {
+            if (devicePointer == llvm::OpenMPIRBuilder::DeviceInfoTy::Pointer ||
+                devicePointer == llvm::OpenMPIRBuilder::DeviceInfoTy::Address) {
               const auto &arg = region.front().getArgument(argIndex);
-              moduleTranslation.mapValue(arg, mapData.BasePointers[i]);
+              moduleTranslation.mapValue(arg, basePointer);
               argIndex++;
             }
           }
@@ -3198,17 +3191,14 @@ createDeviceArgumentAccessor(MapInfoData &mapData, llvm::Argument &arg,
                              llvm::IRBuilderBase::InsertPoint codeGenIP) {
   builder.restoreIP(allocaIP);
 
-  mlir::omp::VariableCaptureKind capture =
-      mlir::omp::VariableCaptureKind::ByRef;
+  omp::VariableCaptureKind capture = omp::VariableCaptureKind::ByRef;
 
   // Find the associated MapInfoData entry for the current input
   for (size_t i = 0; i < mapData.MapClause.size(); ++i)
     if (mapData.OriginalValue[i] == input) {
-      if (auto mapOp = mlir::dyn_cast_if_present<mlir::omp::MapInfoOp>(
-              mapData.MapClause[i])) {
-        capture = mapOp.getMapCaptureType().value_or(
-            mlir::omp::VariableCaptureKind::ByRef);
-      }
+      auto mapOp = cast<omp::MapInfoOp>(mapData.MapClause[i]);
+      capture =
+          mapOp.getMapCaptureType().value_or(omp::VariableCaptureKind::ByRef);
 
       break;
     }
@@ -3229,18 +3219,18 @@ createDeviceArgumentAccessor(MapInfoData &mapData, llvm::Argument &arg,
   builder.restoreIP(codeGenIP);
 
   switch (capture) {
-  case mlir::omp::VariableCaptureKind::ByCopy: {
+  case omp::VariableCaptureKind::ByCopy: {
     retVal = v;
     break;
   }
-  case mlir::omp::VariableCaptureKind::ByRef: {
+  case omp::VariableCaptureKind::ByRef: {
     retVal = builder.CreateAlignedLoad(
         v->getType(), v,
         ompBuilder.M.getDataLayout().getPrefTypeAlign(v->getType()));
     break;
   }
-  case mlir::omp::VariableCaptureKind::This:
-  case mlir::omp::VariableCaptureKind::VLAType:
+  case omp::VariableCaptureKind::This:
+  case omp::VariableCaptureKind::VLAType:
     assert(false && "Currently unsupported capture kind");
     break;
   }
@@ -3292,8 +3282,7 @@ convertOmpTarget(Operation &opInst, llvm::IRBuilderBase &builder,
     builder.restoreIP(codeGenIP);
     unsigned argIndex = 0;
     for (auto &mapOp : mapVars) {
-      auto mapInfoOp =
-          mlir::dyn_cast<mlir::omp::MapInfoOp>(mapOp.getDefiningOp());
+      auto mapInfoOp = cast<omp::MapInfoOp>(mapOp.getDefiningOp());
       llvm::Value *mapOpValue =
           moduleTranslation.lookupValue(mapInfoOp.getVarPtr());
       const auto &arg = targetRegion.front().getArgument(argIndex);
