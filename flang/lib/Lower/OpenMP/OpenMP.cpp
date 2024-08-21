@@ -693,13 +693,14 @@ static void createBodyOfOp(mlir::Operation &op, const OpWithBodyGenInfo &info,
 }
 
 void mapBodySymbols(lower::AbstractConverter &converter, mlir::Region &region,
-                    mlir::Block *regionBlock,
                     llvm::ArrayRef<const semantics::Symbol *> mapSyms) {
+  assert(region.hasOneBlock());
+  mlir::Block &regionBlock = region.front();
   // Clones the `bounds` placing them inside the target region and returns them.
   auto cloneBound = [&](mlir::Value bound) {
     if (mlir::isMemoryEffectFree(bound.getDefiningOp())) {
       mlir::Operation *clonedOp = bound.getDefiningOp()->clone();
-      regionBlock->push_back(clonedOp);
+      regionBlock.push_back(clonedOp);
       return clonedOp->getResult(0);
     }
     TODO(converter.getCurrentLocation(),
@@ -776,16 +777,15 @@ static void genBodyOfTargetDataOp(
 
   fir::FirOpBuilder &firOpBuilder = converter.getFirOpBuilder();
   mlir::Region &region = dataOp.getRegion();
-  mlir::Block *regionBlock = nullptr;
-  regionBlock =
-      firOpBuilder.createBlock(&region, {}, useDeviceTypes, useDeviceLocs);
+  firOpBuilder.createBlock(&region, {}, useDeviceTypes, useDeviceLocs);
 
-  mapBodySymbols(converter, region, regionBlock, useDeviceSymbols);
+  mapBodySymbols(converter, region, useDeviceSymbols);
 
   // Insert dummy instruction to remember the insertion position. The
-  // marker will be deleted since there are not uses.
-  // In the HLFIR flow there are hlfir.declares inserted above while
-  // setting block arguments.
+  // marker will be deleted by clean up passes since there are no uses.
+  // Remembering the position for further insertion is important since
+  // there are hlfir.declares inserted above while setting block arguments
+  // and new code from the body should be inserted after that.
   mlir::Value undefMarker = firOpBuilder.create<fir::UndefOp>(
       dataOp.getLoc(), firOpBuilder.getIndexType());
 
@@ -798,7 +798,7 @@ static void genBodyOfTargetDataOp(
 
   firOpBuilder.create<mlir::omp::TerminatorOp>(currentLocation);
 
-  // Create the insertion point after the marker.
+  // Set the insertion point after the marker.
   firOpBuilder.setInsertionPointAfter(undefMarker.getDefiningOp());
 
   if (ConstructQueue::const_iterator next = std::next(item);
@@ -853,23 +853,22 @@ static void genBodyOfTargetOp(
   fir::FirOpBuilder &firOpBuilder = converter.getFirOpBuilder();
   mlir::Region &region = targetOp.getRegion();
 
-  mlir::Block *regionBlock = nullptr;
   llvm::SmallVector<mlir::Type> allRegionArgTypes;
   llvm::SmallVector<mlir::Location> allRegionArgLocs;
-  mergePrivateVarsInfo(mlir::cast<mlir::omp::TargetOp>(targetOp), mapSymTypes,
+  mergePrivateVarsInfo(targetOp, mapSymTypes,
                        llvm::function_ref<mlir::Type(mlir::Value)>{
                            [](mlir::Value v) { return v.getType(); }},
                        allRegionArgTypes);
 
-  mergePrivateVarsInfo(mlir::cast<mlir::omp::TargetOp>(targetOp), mapSymLocs,
+  mergePrivateVarsInfo(targetOp, mapSymLocs,
                        llvm::function_ref<mlir::Location(mlir::Value)>{
                            [](mlir::Value v) { return v.getLoc(); }},
                        allRegionArgLocs);
 
-  regionBlock = firOpBuilder.createBlock(&region, {}, allRegionArgTypes,
-                                         allRegionArgLocs);
+  mlir::Block *regionBlock = firOpBuilder.createBlock(
+      &region, {}, allRegionArgTypes, allRegionArgLocs);
 
-  mapBodySymbols(converter, region, regionBlock, mapSyms);
+  mapBodySymbols(converter, region, mapSyms);
 
   for (auto [argIndex, argSymbol] :
        llvm::enumerate(dsp.getAllSymbolsToPrivatize())) {
@@ -885,11 +884,10 @@ static void genBodyOfTargetOp(
                              .first);
   }
 
-  // Check if cloning the bounds introduced any dependency on the outer
-  // region. If so, then either clone them as well if they are
-  // MemoryEffectFree, or else copy them to a new temporary and add them to
-  // the map and block_argument lists and replace their uses with the new
-  // temporary.
+  // Check if cloning the bounds introduced any dependency on the outer region.
+  // If so, then either clone them as well if they are MemoryEffectFree, or else
+  // copy them to a new temporary and add them to the map and block_argument
+  // lists and replace their uses with the new temporary.
   llvm::SetVector<mlir::Value> valuesDefinedAbove;
   mlir::getUsedValuesDefinedAbove(region, valuesDefinedAbove);
   while (!valuesDefinedAbove.empty()) {
@@ -922,8 +920,7 @@ static void genBodyOfTargetOp(
                 llvm::omp::OpenMPOffloadMappingFlags::OMP_MAP_IMPLICIT),
             mlir::omp::VariableCaptureKind::ByCopy, copyVal.getType());
 
-        mlir::cast<mlir::omp::TargetOp>(targetOp).getMapVarsMutable().append(
-            mapOp);
+        targetOp.getMapVarsMutable().append(mapOp);
 
         mlir::Value clonedValArg =
             region.addArgument(copyVal.getType(), copyVal.getLoc());
@@ -978,7 +975,7 @@ static void genBodyOfTargetOp(
     genNestedEvaluations(converter, eval);
   }
 
-  dsp.processStep2(mlir::cast<mlir::omp::TargetOp>(targetOp), /*isLoop=*/false);
+  dsp.processStep2(targetOp, /*isLoop=*/false);
 }
 
 template <typename OpTy, typename... Args>
