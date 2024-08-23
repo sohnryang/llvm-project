@@ -63,6 +63,16 @@ public:
     return getDefinedFunctionGUID(F) != 0;
   }
 
+  uint32_t getNrCounters(const Function &F) const {
+    assert(isFunctionKnown(F));
+    return FuncInfo.find(getDefinedFunctionGUID(F))->second.NextCounterIndex;
+  }
+
+  uint32_t getNrCallsites(const Function &F) const {
+    assert(isFunctionKnown(F));
+    return FuncInfo.find(getDefinedFunctionGUID(F))->second.NextCallsiteIndex;
+  }
+
   uint32_t allocateNextCounterIndex(const Function &F) {
     assert(isFunctionKnown(F));
     return FuncInfo.find(getDefinedFunctionGUID(F))->second.NextCounterIndex++;
@@ -113,9 +123,7 @@ class CtxProfAnalysisPrinterPass
     : public PassInfoMixin<CtxProfAnalysisPrinterPass> {
 public:
   enum class PrintMode { Everything, JSON };
-  explicit CtxProfAnalysisPrinterPass(raw_ostream &OS,
-                                      PrintMode Mode = PrintMode::Everything)
-      : OS(OS), Mode(Mode) {}
+  explicit CtxProfAnalysisPrinterPass(raw_ostream &OS);
 
   PreservedAnalyses run(Module &M, ModuleAnalysisManager &MAM);
   static bool isRequired() { return true; }

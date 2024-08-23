@@ -29,6 +29,15 @@ cl::opt<std::string>
     UseCtxProfile("use-ctx-profile", cl::init(""), cl::Hidden,
                   cl::desc("Use the specified contextual profile file"));
 
+static cl::opt<CtxProfAnalysisPrinterPass::PrintMode> PrintLevel(
+    "ctx-profile-printer-level",
+    cl::init(CtxProfAnalysisPrinterPass::PrintMode::JSON), cl::Hidden,
+    cl::values(clEnumValN(CtxProfAnalysisPrinterPass::PrintMode::Everything,
+                          "everything", "print everything - most verbose"),
+               clEnumValN(CtxProfAnalysisPrinterPass::PrintMode::JSON, "json",
+                          "just the json representation of the profile")),
+    cl::desc("Verbosity level of the contextual profile printer pass."));
+
 namespace llvm {
 namespace json {
 Value toJSON(const PGOCtxProfContext &P) {
@@ -150,7 +159,6 @@ PGOContextualProfile CtxProfAnalysis::run(Module &M,
   // If we made it this far, the Result is valid - which we mark by setting
   // .Profiles.
   // Trim first the roots that aren't in this module.
-  DenseSet<GlobalValue::GUID> ProfiledGUIDs;
   for (auto &[RootGuid, _] : llvm::make_early_inc_range(*MaybeCtx))
     if (!Result.FuncInfo.contains(RootGuid))
       MaybeCtx->erase(RootGuid);
@@ -164,6 +172,9 @@ PGOContextualProfile::getDefinedFunctionGUID(const Function &F) const {
     return It->first;
   return 0;
 }
+
+CtxProfAnalysisPrinterPass::CtxProfAnalysisPrinterPass(raw_ostream &OS)
+    : OS(OS), Mode(PrintLevel) {}
 
 PreservedAnalyses CtxProfAnalysisPrinterPass::run(Module &M,
                                                   ModuleAnalysisManager &MAM) {
