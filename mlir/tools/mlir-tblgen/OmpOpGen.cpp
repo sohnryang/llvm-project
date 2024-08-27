@@ -14,6 +14,7 @@
 
 #include "mlir/TableGen/CodeGenHelpers.h"
 #include "llvm/ADT/StringExtras.h"
+#include "llvm/ADT/StringSet.h"
 #include "llvm/ADT/TypeSwitch.h"
 #include "llvm/TableGen/Error.h"
 #include "llvm/TableGen/Record.h"
@@ -184,39 +185,58 @@ static void verifyClause(Record *op, Record *clause) {
 /// All kinds of values are represented as `mlir::Value` fields, whereas
 /// attributes are represented based on their `storageType`.
 ///
+/// \param[in] name The name of the argument.
 /// \param[in] init The `DefInit` object representing the argument.
 /// \param[out] rank Number of levels of array nesting associated with the
 ///                  type.
 ///
 /// \return the name of the base type to represent elements of the argument
 ///         type.
-static StringRef translateArgumentType(Init *init, int &rank) {
+static StringRef translateArgumentType(ArrayRef<SMLoc> loc, StringInit *name,
+                                       Init *init, int &rank) {
   Record *def = cast<DefInit>(init)->getDef();
-  bool isAttr = false, isValue = false;
 
-  for (auto [sc, _] : def->getSuperClasses()) {
-    std::string scName = sc->getNameInitAsString();
-    if (scName == "OptionalAttr")
-      return translateArgumentType(def->getValue("baseAttr")->getValue(), rank);
+  llvm::StringSet superClasses;
+  for (auto [sc, _] : def->getSuperClasses())
+    superClasses.insert(sc->getNameInitAsString());
 
-    if (scName == "TypedArrayAttrBase") {
-      ++rank;
-      return translateArgumentType(def->getValue("elementAttr")->getValue(),
-                                   rank);
-    }
+  // Handle wrapper-style superclasses.
+  if (superClasses.contains("OptionalAttr"))
+    return translateArgumentType(loc, name,
+                                 def->getValue("baseAttr")->getValue(), rank);
 
-    if (scName == "ElementsAttrBase") {
-      rank += def->getValueAsInt("rank");
-      return def->getValueAsString("elementReturnType").trim();
-    }
+  if (superClasses.contains("TypedArrayAttrBase"))
+    return translateArgumentType(
+        loc, name, def->getValue("elementAttr")->getValue(), ++rank);
 
-    if (scName == "Attr")
-      isAttr = true;
-    else if (scName == "TypeConstraint")
-      isValue = true;
-    else if (scName == "Variadic")
-      ++rank;
+  // Handle ElementsAttrBase superclasses.
+  if (superClasses.contains("ElementsAttrBase")) {
+    // TODO: Support properly obtaining rank from ranked types.
+    ++rank;
+
+    if (superClasses.contains("IntElementsAttrBase"))
+      return "::llvm::APInt";
+    if (superClasses.contains("FloatElementsAttr") ||
+        superClasses.contains("RankedFloatElementsAttr"))
+      return "::llvm::APFloat";
+    if (superClasses.contains("DenseArrayAttrBase"))
+      return stripPrefixAndSuffix(def->getValueAsString("returnType"),
+                                  {"::llvm::ArrayRef<"}, {">"});
+
+    // Reset the rank in the case where the base type cannot be inferred, so
+    // that the bare storageType is used instead of a vector.
+    rank = 0;
+    PrintWarning(
+        loc,
+        "could not infer array-like attribute element type for argument '" +
+            name->getAsUnquotedString() + "', will use bare `storageType`");
   }
+
+  // Handle simple attribute and value types.
+  bool isAttr = superClasses.contains("Attr");
+  bool isValue = superClasses.contains("TypeConstraint");
+  if (superClasses.contains("Variadic"))
+    ++rank;
 
   if (isValue) {
     assert(!isAttr &&
@@ -246,7 +266,8 @@ static void genClauseOpsStruct(Record *clause, raw_ostream &os) {
   for (auto [name, arg] :
        zip_equal(arguments->getArgNames(), arguments->getArgs())) {
     int rank = 0;
-    StringRef baseType = translateArgumentType(arg, rank);
+    StringRef baseType =
+        translateArgumentType(clause->getLoc(), name, arg, rank);
 
     if (rank > 0)
       os << "  ::llvm::SmallVector<" << baseType << ">";

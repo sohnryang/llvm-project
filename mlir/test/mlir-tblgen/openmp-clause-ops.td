@@ -7,7 +7,7 @@
 // RUN:   %S/../../../llvm/include/llvm/Frontend/OpenMP/OMP.td \
 // RUN:   -I %S/../../../llvm/include > %t/mlir/Dialect/OpenMP/OmpCommon.td
 
-// RUN: mlir-tblgen -gen-openmp-clause-ops -I %S/../../include -I %t %s | FileCheck %s
+// RUN: mlir-tblgen -gen-openmp-clause-ops -I %S/../../include -I %t %s 2>&1 | FileCheck %s
 
 include "mlir/Dialect/OpenMP/OpenMPOpBase.td"
 
@@ -34,7 +34,13 @@ def OpenMP_MyFirstClause : OpenMP_Clause<
     OptionalAttr<DenseI8ArrayAttr>:$opt_int_elems_attr,
 
     // Multi-level composition
-    ConfinedAttr<OptionalAttr<I64Attr>, [IntMinValue<0>]>:$complex_opt_int_attr
+    ConfinedAttr<OptionalAttr<I64Attr>, [IntMinValue<0>]>:$complex_opt_int_attr,
+
+    // ElementsAttrBase-related edge cases.
+    // CHECK: warning: could not infer array-like attribute element type for argument 'elements_attr', will use bare `storageType`
+    ElementsAttr:$elements_attr,
+    // CHECK: warning: could not infer array-like attribute element type for argument 'string_elements_attr', will use bare `storageType`
+    StringElementsAttr:$string_elements_attr
   );
 }
 // CHECK:      struct MyFirstClauseOps {
@@ -46,13 +52,15 @@ def OpenMP_MyFirstClause : OpenMP_Clause<
 // CHECK-NEXT:   ::llvm::SmallVector<::mlir::Attribute> strArrayAttr;
 // CHECK-NEXT:   ::llvm::SmallVector<::llvm::APInt> anyintElemsAttr;
 // CHECK-NEXT:   ::llvm::SmallVector<::llvm::APFloat> floatNdElemsAttr;
-// CHECK-NEXT:   int floatNdElemsAttrDims[3];
 
 // CHECK-NEXT:   ::mlir::BoolAttr optBoolAttr;
 // CHECK-NEXT:   ::llvm::SmallVector<::mlir::Attribute> optIntArrayAttr;
 // CHECK-NEXT:   ::llvm::SmallVector<int8_t> optIntElemsAttr;
 
 // CHECK-NEXT:   ::mlir::IntegerAttr complexOptIntAttr;
+
+// CHECK-NEXT:   ::mlir::ElementsAttr elementsAttr;
+// CHECK-NEXT:   ::mlir::DenseElementsAttr stringElementsAttr;
 // CHECK-NEXT: }
 
 def OpenMP_MySecondClause : OpenMP_Clause<
