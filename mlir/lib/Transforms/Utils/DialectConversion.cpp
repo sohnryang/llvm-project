@@ -930,6 +930,8 @@ struct ConversionPatternRewriterImpl : public RewriterBase::Listener {
   /// to modify/access them is invalid rewriter API usage.
   SetVector<Operation *> replacedOps;
 
+  DenseSet<Operation *> unresolvedMaterializations;
+
   /// The current type converter, or nullptr if no type converter is currently
   /// active.
   const TypeConverter *currentTypeConverter = nullptr;
@@ -1055,6 +1057,7 @@ void UnresolvedMaterializationRewrite::rollback() {
     for (Value input : op->getOperands())
       rewriterImpl.mapping.erase(input);
   }
+  rewriterImpl.unresolvedMaterializations.erase(op);
   op->erase();
 }
 
@@ -1341,6 +1344,7 @@ Value ConversionPatternRewriterImpl::buildUnresolvedMaterialization(
   builder.setInsertionPoint(ip.getBlock(), ip.getPoint());
   auto convertOp =
       builder.create<UnrealizedConversionCastOp>(loc, outputType, inputs);
+  unresolvedMaterializations.insert(convertOp);
   appendRewrite<UnresolvedMaterializationRewrite>(convertOp, converter, kind);
   return convertOp.getResult(0);
 }
@@ -1379,9 +1383,21 @@ void ConversionPatternRewriterImpl::notifyOpReplaced(Operation *op,
   // Create mappings for each of the new result values.
   for (auto [newValue, result] : llvm::zip(newValues, op->getResults())) {
     if (!newValue) {
-      resultChanged = true;
-      continue;
+      // This result was dropped and no replacement value was provided.
+      if (unresolvedMaterializations.contains(op)) {
+        // Do not create another materializations if we are erasing a
+        // materialization.
+        resultChanged = true;
+        continue;
+      }
+
+      // Materialize a replacement value "out of thin air".
+      newValue = buildUnresolvedMaterialization(
+          MaterializationKind::Source, computeInsertPoint(result),
+          result.getLoc(), /*inputs=*/ValueRange(),
+          /*outputType=*/result.getType(), currentTypeConverter);
     }
+
     // Remap, and check for any result type changes.
     mapping.map(result, newValue);
     resultChanged |= (newValue.getType() != result.getType());
@@ -2359,11 +2375,6 @@ private:
       ConversionPatternRewriterImpl &rewriterImpl,
       DenseMap<Value, SmallVector<Value>> &inverseMapping);
 
-  /// Legalize an operation result that was marked as "erased".
-  LogicalResult
-  legalizeErasedResult(Operation *op, OpResult result,
-                       ConversionPatternRewriterImpl &rewriterImpl);
-
   /// Dialect conversion configuration.
   ConversionConfig config;
 
@@ -2500,26 +2511,18 @@ LogicalResult OperationConverter::legalizeConvertedOpResultTypes(
       continue;
     Operation *op = opReplacement->getOperation();
     for (OpResult result : op->getResults()) {
-      Value newValue = rewriterImpl.mapping.lookupOrNull(result);
-
-      // If the operation result was replaced with null, all of the uses of this
-      // value should be replaced.
-      if (!newValue) {
-        if (failed(legalizeErasedResult(op, result, rewriterImpl)))
-          return failure();
+      // If the type of this op result changed and the result is still live,
+      // we need to materialize a conversion.
+      if (rewriterImpl.mapping.lookupOrNull(result, result.getType()))
         continue;
-      }
-
-      // Otherwise, check to see if the type of the result changed.
-      if (result.getType() == newValue.getType())
-        continue;
-
       Operation *liveUser =
           findLiveUserOfReplaced(result, rewriterImpl, inverseMapping);
       if (!liveUser)
         continue;
 
       // Legalize this result.
+      Value newValue = rewriterImpl.mapping.lookupOrNull(result);
+      assert(newValue && "replacement value not found");
       Value castValue = rewriterImpl.buildUnresolvedMaterialization(
           MaterializationKind::Source, computeInsertPoint(result), op->getLoc(),
           /*inputs=*/newValue, /*outputType=*/result.getType(),
@@ -2846,25 +2849,6 @@ LogicalResult OperationConverter::legalizeUnresolvedMaterializations(
     if (failed(legalizeUnresolvedMaterialization(
             *mat, materializationOps, rewriter, rewriterImpl, inverseMapping)))
       return failure();
-  }
-  return success();
-}
-
-LogicalResult OperationConverter::legalizeErasedResult(
-    Operation *op, OpResult result,
-    ConversionPatternRewriterImpl &rewriterImpl) {
-  // If the operation result was replaced with null, all of the uses of this
-  // value should be replaced.
-  auto liveUserIt = llvm::find_if_not(result.getUsers(), [&](Operation *user) {
-    return rewriterImpl.isOpIgnored(user);
-  });
-  if (liveUserIt != result.user_end()) {
-    InFlightDiagnostic diag = op->emitError("failed to legalize operation '")
-                              << op->getName() << "' marked as erased";
-    diag.attachNote(liveUserIt->getLoc())
-        << "found live user of result #" << result.getResultNumber() << ": "
-        << *liveUserIt;
-    return failure();
   }
   return success();
 }
