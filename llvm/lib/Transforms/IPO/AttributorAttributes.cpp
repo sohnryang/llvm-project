@@ -12583,9 +12583,13 @@ struct AAAddressSpaceImpl : public AAAddressSpace {
         return true;
       if (isa<LoadInst>(Inst))
         MakeChange(Inst, const_cast<Use &>(U));
-      if (isa<StoreInst>(Inst)) {
+      else if (isa<StoreInst>(Inst)) {
         // We only make changes if the use is the pointer operand.
         if (U.getOperandNo() == 1)
+          MakeChange(Inst, const_cast<Use &>(U));
+      } else if (isa<AtomicRMWInst>(Inst) || isa<AtomicCmpXchgInst>(Inst)) {
+        // We only make changes if the use is the pointer operand.
+        if (U.getOperandNo() == 0)
           MakeChange(Inst, const_cast<Use &>(U));
       }
       return true;
