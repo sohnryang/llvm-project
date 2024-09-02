@@ -1,10 +1,12 @@
-if (DEFINED LLVM_HAVE_TF_AOT OR LLVM_HAVE_TFLITE)
+if(DEFINED LLVM_HAVE_TF_AOT OR LLVM_HAVE_TFLITE)
   include(TensorFlowCompile)
   set(LLVM_INLINER_MODEL_PATH_DEFAULT "models/inliner-Oz")
 
-  set(LLVM_INLINER_MODEL_CURRENT_URL "<UNSPECIFIED>" CACHE STRING "URL to download the LLVM inliner model")
+  set(LLVM_INLINER_MODEL_CURRENT_URL
+      "<UNSPECIFIED>"
+      CACHE STRING "URL to download the LLVM inliner model")
 
-  if (DEFINED LLVM_HAVE_TF_AOT)
+  if(DEFINED LLVM_HAVE_TF_AOT)
     tf_find_and_compile(
       ${LLVM_INLINER_MODEL_PATH}
       ${LLVM_INLINER_MODEL_CURRENT_URL}
@@ -13,17 +15,16 @@ if (DEFINED LLVM_HAVE_TF_AOT OR LLVM_HAVE_TFLITE)
       serve
       action
       InlinerSizeModel
-      llvm::InlinerSizeModel
-    )
+      llvm::InlinerSizeModel)
   endif()
 
-  if (LLVM_HAVE_TFLITE)
-    list(APPEND MLLinkDeps
-      tensorflow-lite::tensorflow-lite)
+  if(LLVM_HAVE_TFLITE)
+    list(APPEND MLLinkDeps tensorflow-lite::tensorflow-lite)
   endif()
 endif()
 
-add_llvm_component_library(LLVMAnalysis
+add_llvm_component_library(
+  LLVMAnalysis
   AliasAnalysis.cpp
   AliasAnalysisEvaluator.cpp
   AliasSetTracker.cpp
@@ -108,6 +109,7 @@ add_llvm_component_library(LLVMAnalysis
   ObjCARCAliasAnalysis.cpp
   ObjCARCAnalysisUtils.cpp
   ObjCARCInstKind.cpp
+  OpcodeCounter.cpp
   OptimizationRemarkEmitter.cpp
   OverflowInstAnalysis.cpp
   PHITransAddr.cpp
@@ -142,22 +144,17 @@ add_llvm_component_library(LLVMAnalysis
   ValueTracking.cpp
   VectorUtils.cpp
   ${GeneratedMLSources}
-
   ADDITIONAL_HEADER_DIRS
   ${LLVM_MAIN_INCLUDE_DIR}/llvm/Analysis
-
   DEPENDS
   intrinsics_gen
   ${MLDeps}
-
   LINK_LIBS
   ${MLLinkDeps}
-
   LINK_COMPONENTS
   BinaryFormat
   Core
   Object
   ProfileData
   Support
-  TargetParser
-  )
+  TargetParser)
