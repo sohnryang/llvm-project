@@ -60,6 +60,7 @@ add_llvm_component_library(
   DomPrinter.cpp
   DomTreeUpdater.cpp
   DominanceFrontier.cpp
+  FindFCmpEq.cpp
   FunctionPropertiesAnalysis.cpp
   GlobalsModRef.cpp
   GuardUtils.cpp
