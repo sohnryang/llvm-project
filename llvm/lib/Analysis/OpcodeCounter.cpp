@@ -1,4 +1,4 @@
-#include "llvm/Analysis/Utils/OpcodeCounter.h"
+#include "llvm/Analysis/OpcodeCounter.h"
 #include "llvm/IR/Function.h"
 #include "llvm/IR/PassManager.h"
 
